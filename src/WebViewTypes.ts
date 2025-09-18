@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 
 import type NativeWebViewComponent from './RNCWebViewNativeComponent';
+import type { JavaScriptInterfaceConfig } from './JavaScriptInterface';
 
 type WebViewCommands =
   | 'goForward'
@@ -1357,4 +1358,11 @@ export interface WebViewSharedProps extends ViewProps {
    * Enables support for the Payment Request API for the WebView
    */
   paymentRequestEnabled?: boolean;
+
+  /**
+   * Configuration for JavaScript interfaces that can be called from the WebView.
+   * This allows the webview to call functions like window.Android.getToken() that
+   * execute on the React Native layer.
+   */
+  javaScriptInterfaces?: JavaScriptInterfaceConfig;
 }

@@ -28,6 +28,11 @@ import {
   type WebViewMessageEvent,
   type ShouldStartLoadRequestEvent,
 } from './WebViewTypes';
+import {
+  JavaScriptInterfaceManager,
+  type JavaScriptInterfaceCall,
+  type JavaScriptInterfaceResponse,
+} from './JavaScriptInterface';
 
 import styles from './WebView.styles';
 
@@ -97,6 +102,7 @@ const WebViewComponent = forwardRef<{}, AndroidWebViewProps>(
       nativeConfig,
       onShouldStartLoadWithRequest: onShouldStartLoadWithRequestProp,
       injectedJavaScriptObject,
+      javaScriptInterfaces,
       ...otherProps
     },
     ref
@@ -107,6 +113,18 @@ const WebViewComponent = forwardRef<{}, AndroidWebViewProps>(
     const webViewRef = useRef<React.ComponentRef<
       HostComponent<NativeProps>
     > | null>(null);
+    
+    // JavaScript Interface Manager
+    const jsInterfaceManager = useRef<JavaScriptInterfaceManager | null>(null);
+    
+    // Initialize JavaScript interface manager
+    useEffect(() => {
+      if (javaScriptInterfaces) {
+        jsInterfaceManager.current = new JavaScriptInterfaceManager(javaScriptInterfaces);
+      } else {
+        jsInterfaceManager.current = null;
+      }
+    }, [javaScriptInterfaces]);
 
     const onShouldStartLoadWithRequestCallback = useCallback(
       (shouldStart: boolean, url: string, lockIdentifier?: number) => {
@@ -120,6 +138,40 @@ const WebViewComponent = forwardRef<{}, AndroidWebViewProps>(
         }
       },
       []
+    );
+
+    // Enhanced message handler for JavaScript interfaces
+    const enhancedOnMessage = useCallback(
+      async (event: WebViewMessageEvent) => {
+        try {
+          const data = JSON.parse(event.nativeEvent.data);
+          
+          // Check if this is a JavaScript interface call
+          if (data.type === 'JS_INTERFACE_CALL' && jsInterfaceManager.current) {
+            const call = data as JavaScriptInterfaceCall;
+            const response = await jsInterfaceManager.current.handleCall(call);
+            
+            // Send response back to WebView
+            if (webViewRef.current) {
+              const responseScript = `
+                if (window.__handleJSInterfaceResponse) {
+                  window.__handleJSInterfaceResponse(${JSON.stringify(response)});
+                }
+              `;
+              Commands.injectJavaScript(webViewRef.current, responseScript);
+            }
+            return;
+          }
+        } catch (error) {
+          // If parsing fails or it's not a JS interface call, fall through to original handler
+        }
+        
+        // Call original message handler
+        if (onMessageProp) {
+          onMessageProp(event);
+        }
+      },
+      [onMessageProp]
     );
 
     const {
@@ -146,7 +198,7 @@ const WebViewComponent = forwardRef<{}, AndroidWebViewProps>(
       onLoadProgress,
       onLoadStart,
       onRenderProcessGoneProp,
-      onMessageProp,
+      onMessageProp: enhancedOnMessage,
       onOpenWindowProp,
       startInLoadingState,
       originWhitelist,
@@ -279,16 +331,33 @@ const WebViewComponent = forwardRef<{}, AndroidWebViewProps>(
           )
         : sourceResolved;
 
+    // Enhanced onLoadingFinish to inject JavaScript interfaces
+    const enhancedOnLoadingFinish = useCallback(
+      (event: any) => {
+        // Call original handler first
+        onLoadingFinish(event);
+        
+        // Inject JavaScript interfaces after page load
+        if (jsInterfaceManager.current && webViewRef.current) {
+          const interfaceScript = jsInterfaceManager.current.generateInjectionScript();
+          if (interfaceScript) {
+            Commands.injectJavaScript(webViewRef.current, interfaceScript);
+          }
+        }
+      },
+      [onLoadingFinish]
+    );
+
     const webView = (
       <NativeWebView
         key="webViewKey"
         {...otherProps}
-        messagingEnabled={typeof onMessageProp === 'function'}
+        messagingEnabled={typeof onMessageProp === 'function' || !!javaScriptInterfaces}
         messagingModuleName={messagingModuleName}
         hasOnScroll={!!otherProps.onScroll}
         onLoadingError={onLoadingError}
         onLoadingSubResourceError={onLoadingSubResourceError}
-        onLoadingFinish={onLoadingFinish}
+        onLoadingFinish={enhancedOnLoadingFinish}
         onLoadingProgress={onLoadingProgress}
         onLoadingStart={onLoadingStart}
         onHttpError={onHttpError}
